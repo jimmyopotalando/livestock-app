@@ -1,0 +1,52 @@
+# Node.js / React Native
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+dist/
+.expo/
+.expo-shared/
+
+# React Native bundler cache
+*.expo
+*.expo-shared
+
+# macOS
+.DS_Store
+
+# VSCode settings
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.env
+.env.*
+venv/
+env/
+*.sqlite3
+*.db
+
+# Flask uploads
+server/uploads/
+server/__pycache__/
+server/instance/
+
+# Testing cache
+.pytest_cache/
+coverage/
+
+# Database
+database/*.db
+
+# JetBrains IDEs
+.idea/
+
+# System
+Thumbs.db
+ehthumbs.db
