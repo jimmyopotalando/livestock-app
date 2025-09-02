@@ -76,6 +76,8 @@ python -m unittest discover tests
 
 
 🧠 Machine Learning
+
+
 Uses facial/image recognition via:
 OpenCV for preprocessing
 Dlib / FaceNet for embedding & matching
