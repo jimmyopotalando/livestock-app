@@ -61,6 +61,7 @@ npx expo start
 
 
 ✅ API Endpoints
+
 | Method | Endpoint      | Description                     |
 | ------ | ------------- | ------------------------------- |
 | POST   | /api/register | Register a new animal           |
