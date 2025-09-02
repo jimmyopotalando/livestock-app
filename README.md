@@ -3,7 +3,6 @@
 A mobile and backend solution for registering and verifying livestock using image recognition and machine learning.
 
 
-
 ## 📱 Features
 
 - Animal registration with images (front, back, left, right)
@@ -12,20 +11,6 @@ A mobile and backend solution for registering and verifying livestock using imag
 - Unregistered animal alert system
 - Admin dashboard for verification and alerts
 - React Native frontend + Flask backend
-
-
-
-## 🧱 Folder Structure
-
-livestock-app/
-├── client/ # React Native App (Frontend)
-├── server/ # Flask API & ML backend
-├── database/ # SQL schema
-├── .gitignore
-├── README.md
-└── package.json
-
-
 
 
 ## 🛠 Tech Stack
@@ -53,7 +38,6 @@ livestock-app/
 
 ### 🔧 Backend Setup
 
-
 cd server/
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
@@ -74,13 +58,6 @@ npx expo start
 💡 Scan QR code with Expo Go app to test on your phone.
 
 
-📂 .env Configuration
-
-Create a .env file in /server/:
-FLASK_ENV=development
-SECRET_KEY=your_secret_key
-DATABASE_URL=sqlite:///../database/livestock.db
-UPLOAD_FOLDER=uploads/
 
 
 ✅ API Endpoints
@@ -104,9 +81,8 @@ uploads/ folder stores raw images
 
 
 📦 Future Improvements
-Switch to PostgreSQL in production
+
 Integrate AWS S3 for image storage
-Role-based access for Admin vs. User
 Push notifications for alerts
 OTP or biometric owner verification
 Admin dashboard as a web interface
