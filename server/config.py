@@ -1,20 +1,22 @@
 import os
 from dotenv import load_dotenv
 
-# Load .env file variables
 load_dotenv()
 
+# Absolute path to project root
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
 class Config:
-    # General Config
     SECRET_KEY = os.getenv('SECRET_KEY', 'your_default_secret_key')
     DEBUG = os.getenv('FLASK_ENV', 'production') == 'development'
 
-    # Database
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///../database/livestock.db')
+    # SQLite absolute path
+    SQLALCHEMY_DATABASE_URI = os.getenv(
+        'DATABASE_URL',
+        f"sqlite:///{os.path.join(PROJECT_ROOT, 'database', 'livestock.db')}"
+    )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    # Uploads
-    UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
-    ALLOWED_EXTENSIONS = set(['png', 'jpg', 'jpeg'])
-
-    # Any other configs can be added here
+    # Upload folder absolute path
+    UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', os.path.join(PROJECT_ROOT, 'uploads'))
+    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}

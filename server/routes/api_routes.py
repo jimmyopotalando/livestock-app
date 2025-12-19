@@ -1,21 +1,23 @@
-# routes/api_routes.py
+# server/routes/api_routes.py
 
 import os
 from flask import request, jsonify
 from werkzeug.utils import secure_filename
-from models import db
-from models.animal import Animal, Owner
-from utils.id_generator import generate_animal_id, generate_owner_id
-from utils.image_processor import save_images
-from utils.facial_recognition.recognizer import recognize_animal
+
+# Relative imports
+from ..models import db
+from ..models.animal import Animal, Owner
+from ..utils.id_generator import generate_animal_id, generate_owner_id
+from ..utils.image_processor import save_images
+from ..utils.facial_recognition.recognizer import recognize_animal
+
 from . import api_bp
 
-UPLOAD_FOLDER = 'server/uploads'
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
 
 @api_bp.route('/register', methods=['POST'])
 def register_animal():
     try:
-        # Extract form data
         owner_name = request.form.get('owner_name')
         owner_phone = request.form.get('owner_phone')
         owner_location = request.form.get('owner_location')
@@ -24,7 +26,12 @@ def register_animal():
         # Save or get owner
         owner = Owner.query.filter_by(owner_id=owner_id).first()
         if not owner:
-            owner = Owner(owner_id=owner_id, name=owner_name, phone=owner_phone, location=owner_location)
+            owner = Owner(
+                owner_id=owner_id,
+                name=owner_name,
+                phone=owner_phone,
+                location=owner_location
+            )
             db.session.add(owner)
             db.session.commit()
 
@@ -101,6 +108,7 @@ def alert_authorities():
         data = request.get_json()
         reason = data.get('reason', 'Unregistered animal')
         timestamp = data.get('timestamp', 'Unknown')
+
         # In a real app, store alert in DB or send notification
         return jsonify({
             'success': True,

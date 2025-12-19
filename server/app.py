@@ -1,36 +1,39 @@
 import os
 from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from dotenv import load_dotenv
 
-# Load environment variables from .env
+from .models import db
+from .routes import api_bp
+
 load_dotenv()
 
-app = Flask(__name__)
-CORS(app)  # Enable CORS for cross-origin requests (from React Native app)
+# Absolute path to database folder
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DB_FOLDER = os.path.join(BASE_DIR, "database")
+os.makedirs(DB_FOLDER, exist_ok=True)  # ensures folder exists
 
-# Configurations
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'default_secret_key')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///../database/livestock.db')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'uploads')
+# Absolute path to SQLite DB with forward slashes (Windows-safe)
+DB_PATH = os.path.join(DB_FOLDER, "livestock.db").replace("\\", "/")
 
-# Initialize database
-db = SQLAlchemy(app)
+def create_app():
+    app = Flask(__name__)
+    CORS(app)
 
-# Import and register API routes blueprint
-from server.routes.api_routes import api_bp
-app.register_blueprint(api_bp, url_prefix='/api')
+    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key")
+    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DB_PATH}"
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "uploads")
 
-# Create database tables if they don't exist
-with app.app_context():
-    db.create_all()
+    db.init_app(app)
+    app.register_blueprint(api_bp, url_prefix="/api")
 
-# Root route for quick sanity check
-@app.route('/')
-def home():
-    return "Welcome to the Livestock Registration & Verification API"
+    # Create tables
+    with app.app_context():
+        db.create_all()
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    return app
+
+if __name__ == "__main__":
+    app = create_app()
+    app.run(debug=True, host="0.0.0.0", port=5000)
