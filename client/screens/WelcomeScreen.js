@@ -8,7 +8,7 @@ import { COLORS } from '../constants/theme';
 const WelcomeScreen = ({ navigation }) => {
   return (
     <View style={styles.container}>
-      <Header title="Welcome to North East Gem Location for Livestock Registrations" />
+      <Header title="Welcome to Siaya County for Livestock Registrations" />
 
       <View style={styles.content}>
         <Text style={styles.introText}>
