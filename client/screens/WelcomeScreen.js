@@ -18,12 +18,13 @@ const WelcomeScreen = ({ navigation }) => {
         <Button
           title="Register Animal"
           onPress={() => navigation.navigate('Register')}
+          style={styles.button}
         />
 
         <Button
           title="Verify Animal"
           onPress={() => navigation.navigate('Verify')}
-          style={{ backgroundColor: COLORS.secondary }}
+          style={[styles.button, { backgroundColor: COLORS.secondary }]}
         />
       </View>
     </View>
@@ -44,7 +45,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.black,
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 24,
+  },
+  button: {
+    width: '70%',
+    alignSelf: 'center',
+    marginBottom: 16,
   },
 });
 

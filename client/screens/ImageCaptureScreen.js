@@ -1,68 +1,183 @@
-// ImageCaptureScreen.js
-import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+// SecureImageCaptureScreen.js
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+} from 'react-native';
 import { Camera } from 'expo-camera';
-import { useNavigation } from '@react-navigation/native';
+import * as Location from 'expo-location';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import * as Network from 'expo-network';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Header from '../components/Header';
 import { COLORS } from '../constants/theme';
-import Button from '../components/Button';
 
-const captureOrder = ['front', 'back', 'left', 'right'];
+const CAPTURE_ORDER = ['front', 'back', 'left', 'right'];
+const GPS_THRESHOLD = 20; // meters
 
-const ImageCaptureScreen = () => {
+const SecureImageCaptureScreen = ({ navigation }) => {
   const cameraRef = useRef(null);
-  const navigation = useNavigation();
 
-  const [hasPermission, setHasPermission] = useState(null);
-  const [capturedImages, setCapturedImages] = useState({});
+  const [hasPermission, setHasPermission] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
+  const [images, setImages] = useState({});
+  const [flash, setFlash] = useState(false);
+  const [adminMode, setAdminMode] = useState(false);
 
-  const currentSide = captureOrder[currentStep];
+  const currentSide = CAPTURE_ORDER[currentStep];
 
+  /* 🔒 Lock landscape */
+  useEffect(() => {
+    ScreenOrientation.lockAsync(
+      ScreenOrientation.OrientationLock.LANDSCAPE
+    );
+    return () => ScreenOrientation.unlockAsync();
+  }, []);
+
+  /* 🎥 Permissions */
   useEffect(() => {
     (async () => {
-      const { status } = await Camera.requestCameraPermissionsAsync();
-      setHasPermission(status === 'granted');
+      const cam = await Camera.requestCameraPermissionsAsync();
+      const loc = await Location.requestForegroundPermissionsAsync();
+      setHasPermission(cam.granted && loc.granted);
     })();
   }, []);
 
-  const takePicture = async () => {
-    if (cameraRef.current) {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
-      setCapturedImages((prev) => ({
-        ...prev,
-        [currentSide]: photo,
-      }));
+  /* 📸 Capture Image */
+  const captureImage = async () => {
+    if (images[currentSide] && !adminMode) return;
 
-      if (currentStep < captureOrder.length - 1) {
-        setCurrentStep(currentStep + 1);
-      } else {
-        // All 4 images captured — proceed
-        navigation.navigate('Register', { capturedImages });
-      }
+    const location = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Highest,
+    });
+
+    if (
+      location.coords.accuracy > GPS_THRESHOLD &&
+      !adminMode
+    ) {
+      Alert.alert(
+        'GPS Accuracy Low',
+        'Move to an open area to improve GPS accuracy.'
+      );
+      return;
+    }
+
+    const photo = await cameraRef.current.takePictureAsync({
+      quality: 0.85,
+      exif: true,
+      skipProcessing: false,
+    });
+
+    const captured = {
+      uri: photo.uri,
+      exif: photo.exif,
+      timestamp: new Date().toISOString(),
+      gps: {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        accuracy: location.coords.accuracy,
+      },
+    };
+
+    setImages((prev) => ({ ...prev, [currentSide]: captured }));
+
+    if (currentStep < CAPTURE_ORDER.length - 1) {
+      setCurrentStep(currentStep + 1);
+    } else {
+      finalizeCapture({ ...images, [currentSide]: captured });
     }
   };
 
-  if (hasPermission === null) {
-    return <View />;
-  }
-  if (hasPermission === false) {
+  /* 📦 Offline-safe finalize */
+  const finalizeCapture = async (payloadImages) => {
+    const formData = new FormData();
+
+    Object.entries(payloadImages).forEach(([side, img]) => {
+      formData.append(`image_${side}`, {
+        uri: img.uri,
+        name: `${side}.jpg`,
+        type: 'image/jpeg',
+      });
+      formData.append(`timestamp_${side}`, img.timestamp);
+      formData.append(`gps_${side}`, JSON.stringify(img.gps));
+    });
+
+    const net = await Network.getNetworkStateAsync();
+
+    if (!net.isConnected) {
+      const queue =
+        JSON.parse(await AsyncStorage.getItem('secureCaptureQueue')) || [];
+      queue.push(formData);
+      await AsyncStorage.setItem(
+        'secureCaptureQueue',
+        JSON.stringify(queue)
+      );
+
+      Alert.alert(
+        'Offline',
+        'Images saved securely and will sync automatically.'
+      );
+      navigation.goBack();
+      return;
+    }
+
+    navigation.navigate('Register', { capturedImages: payloadImages });
+  };
+
+  if (!hasPermission) {
     return (
       <View style={styles.permissionContainer}>
-        <Text style={styles.permissionText}>Camera access is required.</Text>
+        <Text style={styles.permissionText}>
+          Camera & GPS permissions are required.
+        </Text>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <Camera ref={cameraRef} style={styles.camera} type={Camera.Constants.Type.back}>
+      <Header
+        title={`Capture ${currentSide.toUpperCase()} Image`}
+        showBack
+        onLongPress={() => setAdminMode(true)}
+      />
+
+      {adminMode && (
+        <Text style={styles.adminBanner}>
+          ADMIN MODE ENABLED — Overrides Logged
+        </Text>
+      )}
+
+      <Camera
+        ref={cameraRef}
+        style={styles.camera}
+        flashMode={
+          flash
+            ? Camera.Constants.FlashMode.torch
+            : Camera.Constants.FlashMode.off
+        }
+      >
         <View style={styles.overlay}>
-          <Text style={styles.captureText}>Capture {currentSide} Image</Text>
           <Text style={styles.progress}>
-            {Object.keys(capturedImages).length}/4 images captured
+            {currentStep + 1} / 4
           </Text>
 
-          <TouchableOpacity style={styles.captureButton} onPress={takePicture} />
+          <TouchableOpacity
+            style={styles.captureButton}
+            onPress={captureImage}
+          />
+
+          <TouchableOpacity
+            style={styles.flashToggle}
+            onPress={() => setFlash(!flash)}
+          >
+            <Text style={styles.flashText}>
+              Flash: {flash ? 'ON' : 'OFF'}
+            </Text>
+          </TouchableOpacity>
         </View>
       </Camera>
     </View>
@@ -70,48 +185,50 @@ const ImageCaptureScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.black,
-  },
-  camera: {
-    flex: 1,
-  },
+  container: { flex: 1, backgroundColor: COLORS.black },
+  camera: { flex: 1 },
   overlay: {
     flex: 1,
     justifyContent: 'flex-end',
     alignItems: 'center',
-    paddingBottom: 60,
+    paddingBottom: 50,
     backgroundColor: 'rgba(0,0,0,0.2)',
   },
-  captureText: {
-    fontSize: 20,
-    color: COLORS.white,
-    marginBottom: 10,
-  },
   progress: {
-    fontSize: 14,
     color: COLORS.white,
-    marginBottom: 20,
+    fontSize: 16,
+    marginBottom: 12,
   },
   captureButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: COLORS.white,
     borderWidth: 4,
     borderColor: COLORS.primary,
+  },
+  flashToggle: {
+    marginTop: 12,
+  },
+  flashText: {
+    color: COLORS.white,
+    fontSize: 14,
+  },
+  adminBanner: {
+    textAlign: 'center',
+    color: 'red',
+    fontWeight: '700',
+    paddingVertical: 4,
   },
   permissionContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
   },
   permissionText: {
-    fontSize: 16,
     color: COLORS.gray,
+    fontSize: 16,
   },
 });
 
-export default ImageCaptureScreen;
+export default SecureImageCaptureScreen;

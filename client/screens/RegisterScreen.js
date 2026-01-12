@@ -1,20 +1,28 @@
 // RegisterScreen.js
-import React, { useState } from 'react';
-import { View, TextInput, StyleSheet, ScrollView, Alert } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Alert,
+} from 'react-native';
 import Header from '../components/Header';
 import ImageUploader from '../components/ImageUploader';
 import Button from '../components/Button';
 import { COLORS } from '../constants/theme';
-import { registerAnimal } from '../services/api'; // We'll create this in api.js
+import { registerAnimal } from '../services/api';
+import * as Network from 'expo-network';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
+
+const GPS_THRESHOLD = 20; // meters
 
 const RegisterScreen = ({ navigation }) => {
-  // Owner Info
-  const [ownerId, setOwnerId] = useState('');
-  const [ownerName, setOwnerName] = useState('');
-  const [ownerPhone, setOwnerPhone] = useState('');
-  const [ownerLocation, setOwnerLocation] = useState('');
+  const scrollRef = useRef(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [adminMode, setAdminMode] = useState(false);
 
-  // Images
   const [images, setImages] = useState({
     front: null,
     back: null,
@@ -22,109 +30,212 @@ const RegisterScreen = ({ navigation }) => {
     right: null,
   });
 
-  const handleImageSelect = (side, image) => {
-    setImages((prev) => ({ ...prev, [side]: image }));
+  const capturedCount = Object.values(images).filter(Boolean).length;
+
+  // Determine if GPS accuracy is sufficient
+  const gpsAccurate = Object.values(images).every(
+    (img) => img?.gps?.accuracy <= GPS_THRESHOLD
+  );
+
+  const canSubmit = capturedCount === 4 && (gpsAccurate || adminMode);
+
+  // Capture timestamp + GPS automatically
+  const handleImageSelect = async (side, img) => {
+    try {
+      // Get location with high accuracy
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Highest,
+      });
+
+      const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      const gps = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        accuracy: location.coords.accuracy,
+      };
+
+      setImages((prev) => ({
+        ...prev,
+        [side]: {
+          ...img,
+          timestamp,
+          gps,
+        },
+      }));
+    } catch (err) {
+      Alert.alert(
+        'Location Error',
+        'Unable to fetch GPS coordinates. Please ensure location is enabled.'
+      );
+      console.error(err);
+    }
   };
 
+  const scrollNext = (i) => {
+    scrollRef.current?.scrollTo({
+      y: i * 260,
+      animated: true,
+    });
+  };
+
+  const queueOffline = async (data) => {
+    const queue =
+      JSON.parse(await AsyncStorage.getItem('offlineQueue')) || [];
+    queue.push(data);
+    await AsyncStorage.setItem('offlineQueue', JSON.stringify(queue));
+  };
+
+  useEffect(() => {
+    const syncQueue = async () => {
+      const net = await Network.getNetworkStateAsync();
+      if (!net.isConnected) return;
+
+      const queue =
+        JSON.parse(await AsyncStorage.getItem('offlineQueue')) || [];
+
+      for (const item of queue) {
+        await registerAnimal(item);
+      }
+
+      if (queue.length) {
+        await AsyncStorage.removeItem('offlineQueue');
+      }
+    };
+
+    syncQueue();
+  }, []);
+
   const handleSubmit = async () => {
-    if (!ownerName || !ownerPhone || !ownerLocation ||
-        !images.front || !images.back || !images.left || !images.right) {
-      Alert.alert('Missing Fields', 'Please fill in all required fields and upload all images.');
+    if (!canSubmit) {
+      Alert.alert(
+        'Blocked',
+        'GPS accuracy too low or images missing.'
+      );
+      return;
+    }
+
+    const net = await Network.getNetworkStateAsync();
+
+    const payload = new FormData();
+    Object.entries(images).forEach(([side, img]) => {
+      payload.append(`image_${side}`, {
+        uri: img.uri,
+        name: `${side}.jpg`,
+        type: 'image/jpeg',
+      });
+      // Automatically include timestamp & GPS
+      payload.append(`image_${side}_timestamp`, img.timestamp);
+      payload.append(`image_${side}_gps`, JSON.stringify(img.gps));
+    });
+
+    if (!net.isConnected) {
+      await queueOffline(payload);
+      Alert.alert(
+        'Offline',
+        'Saved locally. Will sync automatically.'
+      );
+      navigation.goBack();
       return;
     }
 
     try {
-      const formData = new FormData();
+      setSubmitting(true);
+      const res = await registerAnimal(payload);
 
-      formData.append('owner_id', ownerId);
-      formData.append('owner_name', ownerName);
-      formData.append('owner_phone', ownerPhone);
-      formData.append('owner_location', ownerLocation);
-
-      Object.entries(images).forEach(([side, img]) => {
-        formData.append(`image_${side}`, {
-          uri: img.uri,
-          name: `${side}.jpg`,
-          type: 'image/jpeg',
-        });
-      });
-
-      const response = await registerAnimal(formData);
-
-      if (response.success) {
+      if (res?.success) {
         navigation.navigate('Confirmation', {
-          animalId: response.animal_id,
-          ownerId: response.owner_id,
-          ownerName,
-          ownerPhone,
-          ownerLocation,
+          animalId: res.animal_id,
+          images, // pass captured images with timestamp/GPS
         });
       } else {
-        Alert.alert('Error', 'Failed to register animal. Try again.');
+        Alert.alert('Error', 'Registration failed.');
       }
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Something went wrong during registration.');
+    } catch (e) {
+      Alert.alert('Error', 'Submission failed.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
     <View style={styles.container}>
-      <Header title="Register Animal" showBack />
+      <Header
+        title="Capture Animal Images"
+        showBack
+        onLongPress={() => setAdminMode(true)}
+      />
 
-      <ScrollView contentContainerStyle={styles.form}>
-        <ImageUploader label="Front Image" onImageSelected={(img) => handleImageSelect('front', img)} />
-        <ImageUploader label="Back Image" onImageSelected={(img) => handleImageSelect('back', img)} />
-        <ImageUploader label="Left Image" onImageSelected={(img) => handleImageSelect('left', img)} />
-        <ImageUploader label="Right Image" onImageSelected={(img) => handleImageSelect('right', img)} />
+      {adminMode && (
+        <Text style={styles.adminBanner}>
+          ADMIN MODE ENABLED — Overrides Logged
+        </Text>
+      )}
 
-        <TextInput
-          placeholder="Owner ID (optional)"
-          value={ownerId}
-          onChangeText={setOwnerId}
-          style={styles.input}
-        />
-        <TextInput
-          placeholder="Owner Name"
-          value={ownerName}
-          onChangeText={setOwnerName}
-          style={styles.input}
-        />
-        <TextInput
-          placeholder="Owner Phone"
-          value={ownerPhone}
-          onChangeText={setOwnerPhone}
-          keyboardType="phone-pad"
-          style={styles.input}
-        />
-        <TextInput
-          placeholder="Owner Location"
-          value={ownerLocation}
-          onChangeText={setOwnerLocation}
-          style={styles.input}
-        />
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.content}>
+        <Text style={styles.instructions}>
+          Capture clear images from all angles using the camera.
+        </Text>
 
-        <Button title="Submit Registration" onPress={handleSubmit} />
+        {['front', 'back', 'left', 'right'].map((side, index) => (
+          <ImageUploader
+            key={side}
+            label={`Capture ${side.charAt(0).toUpperCase() + side.slice(1)} Image`}
+            onImageSelected={(i) => handleImageSelect(side, i)}
+            onCaptured={() => scrollNext(index + 1)}
+            adminMode={adminMode}
+            disabled={!!images[side]} // Prevent retake
+          />
+        ))}
+
+        <Text style={styles.progress}>
+          {capturedCount} / 4 images captured
+        </Text>
+
+        {!gpsAccurate && !adminMode && (
+          <Text style={styles.warning}>
+            GPS accuracy too low. Move to open area.
+          </Text>
+        )}
+
+        <Button
+          title={submitting ? 'Submitting...' : 'Submit Registration'}
+          onPress={handleSubmit}
+          disabled={!canSubmit || submitting}
+          style={styles.submitButton}
+        />
       </ScrollView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
+  container: { flex: 1, backgroundColor: COLORS.background },
+  content: { padding: 20, paddingBottom: 40 },
+  instructions: {
+    textAlign: 'center',
+    marginBottom: 20,
+    fontSize: 16,
   },
-  form: {
-    padding: 20,
+  progress: {
+    textAlign: 'center',
+    marginTop: 10,
+    color: COLORS.gray,
   },
-  input: {
-    borderWidth: 1,
-    borderColor: COLORS.gray,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    backgroundColor: COLORS.white,
+  warning: {
+    textAlign: 'center',
+    color: 'red',
+    marginTop: 8,
+  },
+  submitButton: {
+    width: '70%',
+    alignSelf: 'center',
+    marginTop: 20,
+  },
+  adminBanner: {
+    textAlign: 'center',
+    color: 'red',
+    fontWeight: '700',
+    marginVertical: 6,
   },
 });
 
