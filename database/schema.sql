@@ -27,3 +27,39 @@ CREATE TABLE IF NOT EXISTS alerts (
     status VARCHAR(20) DEFAULT 'Pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Table to track payments (Mpesa or otherwise)
+CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    animal_id VARCHAR(20) NOT NULL,
+    owner_id VARCHAR(20) NOT NULL,
+    payment_reference VARCHAR(50) UNIQUE NOT NULL,
+    amount REAL NOT NULL,
+    status VARCHAR(20) DEFAULT 'Pending',
+    payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (animal_id) REFERENCES animals (animal_id) ON DELETE CASCADE
+);
+
+-- Table to track ownership history
+CREATE TABLE IF NOT EXISTS ownership_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    animal_id VARCHAR(20) NOT NULL,
+    previous_owner_id VARCHAR(20) NOT NULL,
+    new_owner_id VARCHAR(20) NOT NULL,
+    changed_by VARCHAR(50) NOT NULL,       -- e.g., admin ID
+    change_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reason TEXT,
+    FOREIGN KEY (animal_id) REFERENCES animals (animal_id) ON DELETE CASCADE
+);
+
+-- Table to track slaughter records
+CREATE TABLE IF NOT EXISTS slaughter_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    animal_id VARCHAR(20) NOT NULL,
+    owner_id VARCHAR(20) NOT NULL,
+    slaughtered_by VARCHAR(50) NOT NULL,  -- admin or staff
+    slaughter_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reason TEXT,
+    location VARCHAR(100),
+    FOREIGN KEY (animal_id) REFERENCES animals (animal_id) ON DELETE CASCADE
+);
