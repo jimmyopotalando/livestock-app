@@ -33,6 +33,7 @@ def test_create_payment(app):
         db.session.delete(retrieved)
         db.session.commit()
 
+
 # ---------- Mpesa Client Tests ----------
 
 @pytest.mark.skip(reason="Requires live/sandbox credentials")
@@ -48,6 +49,7 @@ def test_stk_push():
     assert "CheckoutRequestID" in response
     assert response["ResponseCode"] == "0"
 
+
 @pytest.mark.skip(reason="Requires valid checkout_request_id from Mpesa")
 def test_check_transaction_status():
     """
@@ -58,6 +60,7 @@ def test_check_transaction_status():
     response = client.check_transaction_status(checkout_id)
     
     assert "ResponseCode" in response
+
 
 # ---------- Payment Guard Tests ----------
 
@@ -86,4 +89,99 @@ def test_payment_guard_record_and_success(app):
 
         # Cleanup
         db.session.delete(payment)
+        db.session.commit()
+
+
+# ---------- Payment Verification by Action Tests ----------
+
+def test_has_paid_success_for_action(app):
+    """
+    Ensure has_paid returns True for valid successful payment.
+    """
+    with app.app_context():
+        payment = Payment(
+            animal_id="ANIMALPAY1",
+            action_type="slaughter",
+            amount=200,
+            phone_number="254700000000",
+            status="success",
+            timestamp=datetime.utcnow(),
+            synced=True
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+        assert PaymentGuard.has_paid("ANIMALPAY1", "slaughter") is True
+
+        db.session.delete(payment)
+        db.session.commit()
+
+
+def test_has_paid_fails_for_wrong_action(app):
+    """
+    Ensure has_paid fails if action_type does not match.
+    """
+    with app.app_context():
+        payment = Payment(
+            animal_id="ANIMALPAY2",
+            action_type="ownership",
+            amount=300,
+            phone_number="254711111111",
+            status="success",
+            timestamp=datetime.utcnow(),
+            synced=True
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+        assert PaymentGuard.has_paid("ANIMALPAY2", "slaughter") is False
+
+        db.session.delete(payment)
+        db.session.commit()
+
+
+def test_has_paid_fails_for_unsuccessful_payment(app):
+    """
+    Ensure failed or pending payments are rejected.
+    """
+    with app.app_context():
+        payment = Payment(
+            animal_id="ANIMALPAY3",
+            action_type="slaughter",
+            amount=150,
+            phone_number="254722222222",
+            status="failed",
+            timestamp=datetime.utcnow(),
+            synced=True
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+        assert PaymentGuard.has_paid("ANIMALPAY3", "slaughter") is False
+
+        db.session.delete(payment)
+        db.session.commit()
+
+
+# ---------- Offline / Duplicate Safety Tests ----------
+
+def test_duplicate_checkout_request_id_prevented(app):
+    """
+    Ensure duplicate checkout_request_id is not recorded twice.
+    """
+    with app.app_context():
+        data = {
+            "checkout_request_id": "DUPLICATE123",
+            "phone_number": "254733333333",
+            "amount": 75,
+            "result_code": "0",
+            "result_desc": "Success"
+        }
+
+        first = PaymentGuard.record_payment(data)
+        second = PaymentGuard.record_payment(data)
+
+        assert first.id == second.id
+
+        db.session.delete(first)
         db.session.commit()

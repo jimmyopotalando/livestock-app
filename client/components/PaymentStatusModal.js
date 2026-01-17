@@ -16,8 +16,9 @@ import { COLORS } from '../constants/theme';
  * - status: 'PENDING' | 'SUCCESS' | 'FAILED'
  * - message (string)
  * - amount (number)
- * - onRetry ()
- * - onClose ()
+ * - onRetry () → for retrying failed payments
+ * - onClose () → closes the modal
+ * - pendingPayments (array) → optional, shows multiple pending payments
  */
 const PaymentStatusModal = ({
   visible,
@@ -26,6 +27,7 @@ const PaymentStatusModal = ({
   amount = 100,
   onRetry,
   onClose,
+  pendingPayments = [],
 }) => {
   useEffect(() => {
     if (status === 'SUCCESS') {
@@ -56,7 +58,9 @@ const PaymentStatusModal = ({
       case 'FAILED':
         return 'Payment Failed';
       default:
-        return 'Processing Payment';
+        return pendingPayments.length
+          ? 'Pending Payments Detected'
+          : 'Processing Payment';
     }
   };
 
@@ -73,12 +77,23 @@ const PaymentStatusModal = ({
 
           <Text style={styles.title}>{renderTitle()}</Text>
 
-          <Text style={styles.amount}>KES {amount}</Text>
+          {/* Show either single amount or list of pending payments */}
+          {pendingPayments.length > 0 ? (
+            pendingPayments.map((p, idx) => (
+              <Text key={idx} style={styles.amount}>
+                {p.animal_id} — KES {p.amount}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.amount}>KES {amount}</Text>
+          )}
 
           <Text style={styles.message}>
             {message ||
               (status === 'PENDING'
-                ? 'Waiting for Mpesa confirmation...'
+                ? pendingPayments.length
+                  ? `You have ${pendingPayments.length} pending payment(s). Please complete them before proceeding.`
+                  : 'Waiting for Mpesa confirmation...'
                 : status === 'SUCCESS'
                 ? 'You may proceed.'
                 : 'Transaction was not completed.')}
@@ -133,12 +148,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.black,
     marginBottom: 6,
+    textAlign: 'center',
   },
   amount: {
     fontSize: 18,
     fontWeight: '600',
     color: COLORS.primary,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   message: {
     fontSize: 15,

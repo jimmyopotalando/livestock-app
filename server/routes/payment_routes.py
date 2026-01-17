@@ -1,13 +1,15 @@
-# server/routes/payment_routes.py
 from flask import Blueprint, request, jsonify
 from server.models.payment import db, Payment
 from server.utils.mpesa_client import MpesaClient
+from server.utils.id_validator import animal_exists  # ✅ Import animal ID validator
 from datetime import datetime
+from sqlalchemy.exc import SQLAlchemyError
 
 payment_bp = Blueprint('payment_bp', __name__, url_prefix='/payment')
 
 # Initialize Mpesa client (assuming you have credentials in .env)
 mpesa_client = MpesaClient()
+
 
 @payment_bp.route('/process', methods=['POST'])
 def process_payment():
@@ -31,6 +33,10 @@ def process_payment():
 
     if not animal_id or not amount or not phone_number:
         return jsonify({"success": False, "message": "Missing required fields"}), 400
+
+    # ✅ Validate animal ID
+    if not animal_exists(animal_id):
+        return jsonify({"success": False, "message": "Invalid animal_id"}), 400
 
     try:
         # Create payment record in DB
@@ -86,34 +92,44 @@ def sync_offline_payments():
     synced = []
     failed = []
 
-    for p in payments:
-        try:
-            payment = Payment(
-                animal_id=p.get('animal_id'),
-                amount=p.get('amount'),
-                phone_number=p.get('phone_number'),
-                payment_method=p.get('payment_method', 'Mpesa'),
-                status='pending',
-                timestamp=datetime.utcnow(),
-                synced=False,
-            )
-            db.session.add(payment)
-            db.session.commit()
+    try:
+        # ✅ Wrap entire batch in a single transaction
+        with db.session.begin():
+            for p in payments:
+                animal_id = p.get('animal_id')
 
-            # Attempt online payment
-            transaction_id = mpesa_client.stk_push(
-                phone_number=payment.phone_number,
-                amount=payment.amount,
-                reference=f"ANIMAL-{payment.animal_id}"
-            )
-            payment.transaction_id = transaction_id
-            payment.status = 'success'
-            payment.synced = True
-            db.session.commit()
+                # ✅ Validate animal ID per payment
+                if not animal_exists(animal_id):
+                    failed.append({"payment": p, "error": "Invalid animal_id"})
+                    continue  # Skip invalid payment
 
-            synced.append(payment.to_dict())
-        except Exception as e:
-            db.session.rollback()
-            failed.append({"payment": p, "error": str(e)})
+                payment = Payment(
+                    animal_id=animal_id,
+                    amount=p.get('amount'),
+                    phone_number=p.get('phone_number'),
+                    payment_method=p.get('payment_method', 'Mpesa'),
+                    status='pending',
+                    timestamp=datetime.utcnow(),
+                    synced=False,
+                )
+                db.session.add(payment)
 
-    return jsonify({"success": True, "synced": synced, "failed": failed})
+                # Attempt online payment
+                try:
+                    transaction_id = mpesa_client.stk_push(
+                        phone_number=payment.phone_number,
+                        amount=payment.amount,
+                        reference=f"ANIMAL-{payment.animal_id}"
+                    )
+                    payment.transaction_id = transaction_id
+                    payment.status = 'success'
+                    payment.synced = True
+                    synced.append(payment.to_dict())
+                except Exception as e:
+                    failed.append({"payment": p, "error": f"Mpesa error: {str(e)}"})
+
+        return jsonify({"success": True, "synced": synced, "failed": failed})
+
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        return jsonify({"success": False, "synced": [], "failed": payments, "error": str(e)})

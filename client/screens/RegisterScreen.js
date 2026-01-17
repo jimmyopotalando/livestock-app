@@ -6,6 +6,7 @@ import {
   StyleSheet,
   ScrollView,
   Alert,
+  TextInput,
 } from 'react-native';
 import Header from '../components/Header';
 import ImageUploader from '../components/ImageUploader';
@@ -30,24 +31,31 @@ const RegisterScreen = ({ navigation }) => {
     right: null,
   });
 
+  // ✅ Owner fields (UI only)
+  const [ownerId, setOwnerId] = useState('');
+  const [ownerName, setOwnerName] = useState('');
+  const [ownerPhone, setOwnerPhone] = useState('');
+  const [ownerLocation, setOwnerLocation] = useState('');
+
   const capturedCount = Object.values(images).filter(Boolean).length;
 
-  // Determine if GPS accuracy is sufficient
   const gpsAccurate = Object.values(images).every(
     (img) => img?.gps?.accuracy <= GPS_THRESHOLD
   );
 
   const canSubmit = capturedCount === 4 && (gpsAccurate || adminMode);
 
-  // Capture timestamp + GPS automatically
   const handleImageSelect = async (side, img) => {
     try {
-      // Get location with high accuracy
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Highest,
       });
 
-      const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      const timestamp = new Date()
+        .toISOString()
+        .slice(0, 19)
+        .replace('T', ' ');
+
       const gps = {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
@@ -67,7 +75,6 @@ const RegisterScreen = ({ navigation }) => {
         'Location Error',
         'Unable to fetch GPS coordinates. Please ensure location is enabled.'
       );
-      console.error(err);
     }
   };
 
@@ -123,7 +130,6 @@ const RegisterScreen = ({ navigation }) => {
         name: `${side}.jpg`,
         type: 'image/jpeg',
       });
-      // Automatically include timestamp & GPS
       payload.append(`image_${side}_timestamp`, img.timestamp);
       payload.append(`image_${side}_gps`, JSON.stringify(img.gps));
     });
@@ -145,7 +151,7 @@ const RegisterScreen = ({ navigation }) => {
       if (res?.success) {
         navigation.navigate('Confirmation', {
           animalId: res.animal_id,
-          images, // pass captured images with timestamp/GPS
+          images,
         });
       } else {
         Alert.alert('Error', 'Registration failed.');
@@ -183,7 +189,7 @@ const RegisterScreen = ({ navigation }) => {
             onImageSelected={(i) => handleImageSelect(side, i)}
             onCaptured={() => scrollNext(index + 1)}
             adminMode={adminMode}
-            disabled={!!images[side]} // Prevent retake
+            disabled={!!images[side]}
           />
         ))}
 
@@ -196,6 +202,36 @@ const RegisterScreen = ({ navigation }) => {
             GPS accuracy too low. Move to open area.
           </Text>
         )}
+
+        {/* ✅ Owner Inputs (UI only) */}
+        <TextInput
+          placeholder="Owner ID"
+          value={ownerId}
+          onChangeText={setOwnerId}
+          style={styles.input}
+        />
+
+        <TextInput
+          placeholder="Owner Name"
+          value={ownerName}
+          onChangeText={setOwnerName}
+          style={styles.input}
+        />
+
+        <TextInput
+          placeholder="Owner Phone"
+          value={ownerPhone}
+          onChangeText={setOwnerPhone}
+          keyboardType="phone-pad"
+          style={styles.input}
+        />
+
+        <TextInput
+          placeholder="Owner Location"
+          value={ownerLocation}
+          onChangeText={setOwnerLocation}
+          style={styles.input}
+        />
 
         <Button
           title={submitting ? 'Submitting...' : 'Submit Registration'}
@@ -225,6 +261,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: 'red',
     marginTop: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: COLORS.gray,
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 8,
+    backgroundColor: COLORS.white,
   },
   submitButton: {
     width: '70%',

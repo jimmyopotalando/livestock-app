@@ -1,5 +1,5 @@
 // VerifyAnimalScreen.js
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,9 +16,10 @@ import Button from '../components/Button';
 import { COLORS } from '../constants/theme';
 import * as Network from 'expo-network';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { verifyAnimal } from '../services/api'; 
+import { verifyAnimal } from '../services/api';
 
 const GPS_THRESHOLD = 20; // meters
+const OFFLINE_QUEUE_KEY = 'offlineVerificationQueue';
 
 const VerifyAnimalScreen = ({ navigation }) => {
   const scrollRef = useRef(null);
@@ -40,20 +41,23 @@ const VerifyAnimalScreen = ({ navigation }) => {
   const capturedCount = Object.values(images).filter(Boolean).length;
 
   const gpsAccurate = Object.values(images).every(
-    (img) => img?.gps?.accuracy <= GPS_THRESHOLD
+    (img) =>
+      typeof img?.gps?.accuracy === 'number' &&
+      img.gps.accuracy <= GPS_THRESHOLD
   );
+
+  const phoneValid = /^\+?\d{8,15}$/.test(ownerPhone);
 
   const canSubmit =
     capturedCount === 4 &&
     ownerId &&
     ownerName &&
-    ownerPhone &&
     ownerLocation &&
+    phoneValid &&
     (gpsAccurate || adminMode);
 
   const handleImageSelect = (side, img) => {
     setImages((prev) => ({ ...prev, [side]: img }));
-    // Auto-scroll to next capture
     scrollNext(side);
   };
 
@@ -65,26 +69,40 @@ const VerifyAnimalScreen = ({ navigation }) => {
     });
   };
 
-  const queueOffline = async (data) => {
-    const queue =
-      JSON.parse(await AsyncStorage.getItem('offlineVerificationQueue')) || [];
-    queue.push(data);
-    await AsyncStorage.setItem(
-      'offlineVerificationQueue',
-      JSON.stringify(queue)
-    );
+  /**
+   * Store a SERIALIZABLE offline payload
+   */
+  const queueOffline = async (offlineItem) => {
+    try {
+      const existing =
+        JSON.parse(await AsyncStorage.getItem(OFFLINE_QUEUE_KEY)) || [];
+
+      const exists = existing.some((item) => {
+        if (item.owner_id !== offlineItem.owner_id) return false;
+        return ['front', 'back', 'left', 'right'].every(
+          (side) =>
+            item.images?.[side]?.timestamp ===
+            offlineItem.images?.[side]?.timestamp
+        );
+      });
+
+      if (!exists) {
+        existing.push(offlineItem);
+        await AsyncStorage.setItem(
+          OFFLINE_QUEUE_KEY,
+          JSON.stringify(existing)
+        );
+      } else {
+        console.log('Duplicate offline verification skipped');
+      }
+    } catch (err) {
+      console.error('Failed to queue offline verification', err);
+    }
   };
 
-  const handleSubmit = async () => {
-    if (!canSubmit) {
-      Alert.alert(
-        'Blocked',
-        'Please capture all images with sufficient GPS accuracy and fill all fields.'
-      );
-      return;
-    }
-
+  const buildFormData = () => {
     const payload = new FormData();
+
     Object.entries(images).forEach(([side, img]) => {
       payload.append(`image_${side}`, {
         uri: img.uri,
@@ -100,42 +118,83 @@ const VerifyAnimalScreen = ({ navigation }) => {
     payload.append('owner_phone', ownerPhone);
     payload.append('owner_location', ownerLocation);
 
-    const net = await Network.getNetworkStateAsync();
+    return payload;
+  };
 
-    if (!net.isConnected) {
-      await queueOffline(payload);
+  const handleSubmit = async () => {
+    if (!canSubmit) {
       Alert.alert(
-        'Offline',
-        'Saved locally. Will sync automatically.'
+        'Blocked',
+        'Please capture all images with sufficient GPS accuracy and fill all fields correctly.'
       );
-      navigation.goBack();
       return;
     }
+
+    const offlinePayload = {
+      owner_id: ownerId,
+      owner_name: ownerName,
+      owner_phone: ownerPhone,
+      owner_location: ownerLocation,
+      images,
+      created_at: Date.now(),
+      admin_override: adminMode,
+    };
 
     try {
       setSubmitting(true);
 
+      const net = await Network.getNetworkStateAsync();
+
+      if (!net.isConnected) {
+        await queueOffline(offlinePayload);
+        Alert.alert('Offline', 'Saved locally. Will sync automatically.');
+        navigation.goBack();
+        return;
+      }
+
+      const payload = buildFormData();
       const res = await verifyAnimal(payload);
 
       if (res?.success) {
-        if (res.hints && res.hints.length > 0) {
+        if (res.hints?.length) {
           Alert.alert(
             'Verification Hints',
             res.hints.join('\n'),
             [{ text: 'OK', onPress: () => navigation.goBack() }]
           );
         } else {
-          Alert.alert('Verification Successful', `Verification ID: ${res.verification_id}`);
-          navigation.goBack();
+          Alert.alert(
+            'Verification Successful',
+            `Verification ID: ${res.verification_id}`,
+            [{ text: 'OK', onPress: () => navigation.goBack() }]
+          );
         }
       } else {
-        Alert.alert('Error', 'Verification failed.');
+        Alert.alert(
+          'Verification Failed',
+          res?.message || 'Please try again.'
+        );
       }
     } catch (e) {
-      Alert.alert('Error', 'Submission failed.');
+      await queueOffline(offlinePayload);
+      Alert.alert(
+        'Network Error',
+        'Saved locally due to network error.'
+      );
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const enableAdminMode = () => {
+    Alert.alert(
+      'Admin Mode',
+      'Enable GPS override? This action will be logged.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Enable', onPress: () => setAdminMode(true) },
+      ]
+    );
   };
 
   return (
@@ -146,7 +205,7 @@ const VerifyAnimalScreen = ({ navigation }) => {
       <Header
         title="Verify Animal"
         showBack
-        onLongPress={() => setAdminMode(true)}
+        onLongPress={enableAdminMode}
       />
 
       {adminMode && (
@@ -176,7 +235,7 @@ const VerifyAnimalScreen = ({ navigation }) => {
 
         {!gpsAccurate && !adminMode && (
           <Text style={styles.warning}>
-            GPS accuracy too low. Move to open area.
+            GPS accuracy too low. Move to an open area.
           </Text>
         )}
 
@@ -184,12 +243,14 @@ const VerifyAnimalScreen = ({ navigation }) => {
           placeholder="Owner ID"
           value={ownerId}
           onChangeText={setOwnerId}
+          editable={!submitting}
           style={styles.input}
         />
         <TextInput
           placeholder="Owner Name"
           value={ownerName}
           onChangeText={setOwnerName}
+          editable={!submitting}
           style={styles.input}
         />
         <TextInput
@@ -197,12 +258,14 @@ const VerifyAnimalScreen = ({ navigation }) => {
           value={ownerPhone}
           onChangeText={setOwnerPhone}
           keyboardType="phone-pad"
+          editable={!submitting}
           style={styles.input}
         />
         <TextInput
           placeholder="Owner Location"
           value={ownerLocation}
           onChangeText={setOwnerLocation}
+          editable={!submitting}
           style={styles.input}
         />
 
@@ -232,7 +295,12 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   submitButton: { width: '70%', alignSelf: 'center', marginTop: 20 },
-  adminBanner: { textAlign: 'center', color: 'red', fontWeight: '700', marginVertical: 6 },
+  adminBanner: {
+    textAlign: 'center',
+    color: 'red',
+    fontWeight: '700',
+    marginVertical: 6,
+  },
   imageContainer: { marginVertical: 12 },
 });
 

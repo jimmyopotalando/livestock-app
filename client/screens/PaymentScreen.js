@@ -1,5 +1,5 @@
 // PaymentScreen.js
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,33 +12,76 @@ import {
 } from 'react-native';
 import Header from '../components/Header';
 import Button from '../components/Button';
+import PaymentStatusModal from '../components/PaymentStatusModal';
 import { COLORS } from '../constants/theme';
 import * as Network from 'expo-network';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { processPayment } from '../services/paymentService';
+import { processPayment, syncOfflinePayments, fetchPendingPayments } from '../services/paymentService';
+
+const OFFLINE_QUEUE_KEY = 'offlinePaymentQueue';
 
 const PaymentScreen = ({ route, navigation }) => {
-  const { animalId, actionType } = route.params || {}; // e.g., 'ownership', 'slaughter'
+  const { animalId, actionType } = route.params || {};
   const [submitting, setSubmitting] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
 
   const [amount, setAmount] = useState('');
   const [phone, setPhone] = useState('');
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalStatus, setModalStatus] = useState('PENDING'); // 'PENDING' | 'SUCCESS' | 'FAILED'
+  const [modalMessage, setModalMessage] = useState('');
+  const [pendingPayments, setPendingPayments] = useState([]);
 
-  // Determine if submission is possible
   const canSubmit = amount && phone;
 
-  // Queue offline payments
+  // Queue offline payments with deduplication
   const queueOffline = async (payload) => {
-    const queue =
-      JSON.parse(await AsyncStorage.getItem('offlinePaymentQueue')) || [];
-    queue.push(payload);
-    await AsyncStorage.setItem('offlinePaymentQueue', JSON.stringify(queue));
+    try {
+      const queue = JSON.parse(await AsyncStorage.getItem(OFFLINE_QUEUE_KEY)) || [];
+
+      const exists = queue.some(
+        (item) =>
+          item.animalId === payload.animalId &&
+          item.timestamp === payload.timestamp
+      );
+
+      if (!exists) {
+        queue.push(payload);
+        await AsyncStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+        console.log('Offline payment queued:', payload);
+      } else {
+        console.log('Duplicate payment skipped from queue');
+      }
+    } catch (err) {
+      console.error('Failed to queue payment offline', err);
+    }
   };
+
+  // Sync offline payments on screen load or network reconnect
+  useEffect(() => {
+    const syncAndFetch = async () => {
+      const net = await Network.getNetworkStateAsync();
+      if (net.isConnected) {
+        await syncOfflinePayments(); // sync any queued offline payments
+      }
+      const pending = await fetchPendingPayments(animalId, actionType);
+      setPendingPayments(pending);
+    };
+
+    syncAndFetch();
+  }, [animalId, actionType]);
 
   const handleSubmit = async () => {
     if (!canSubmit) {
       Alert.alert('Incomplete', 'Please enter both phone number and amount.');
+      return;
+    }
+
+    if (pendingPayments.length > 0) {
+      // Block submission if there are pending payments
+      setModalStatus('PENDING');
+      setModalMessage(`You have ${pendingPayments.length} pending payment(s). Please complete them first.`);
+      setModalVisible(true);
       return;
     }
 
@@ -52,37 +95,36 @@ const PaymentScreen = ({ route, navigation }) => {
 
     try {
       setSubmitting(true);
+      setModalVisible(true);
+      setModalStatus('PENDING');
+      setModalMessage('Processing payment...');
 
       const net = await Network.getNetworkStateAsync();
       if (!net.isConnected) {
         await queueOffline(payload);
-        Alert.alert(
-          'Offline',
-          'Payment saved locally and will be processed when online.'
-        );
-        navigation.goBack();
+        setModalStatus('FAILED');
+        setModalMessage('Payment saved offline. Will sync when online.');
         return;
       }
 
       const res = await processPayment(payload);
 
       if (res?.success) {
-        Alert.alert(
-          'Payment Successful',
-          `Payment of ${payload.amount} processed successfully.`,
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.navigate('Confirmation', { animalId }),
-            },
-          ]
-        );
+        setModalStatus('SUCCESS');
+        setModalMessage(`Payment of KES ${payload.amount} processed successfully.`);
+        setTimeout(() => {
+          setModalVisible(false);
+          navigation.navigate('Confirmation', { animalId });
+        }, 1500);
       } else {
-        Alert.alert('Payment Failed', res?.message || 'Transaction failed.');
+        setModalStatus('FAILED');
+        setModalMessage(res?.message || 'Transaction failed.');
       }
-    } catch (e) {
-      console.error(e);
-      Alert.alert('Error', 'Payment could not be processed.');
+    } catch (err) {
+      console.error('Payment error', err);
+      await queueOffline(payload);
+      setModalStatus('FAILED');
+      setModalMessage('Saved locally due to network error. Will sync when online.');
     } finally {
       setSubmitting(false);
     }
@@ -139,6 +181,17 @@ const PaymentScreen = ({ route, navigation }) => {
           style={styles.submitButton}
         />
       </ScrollView>
+
+      {/* Payment Status Modal */}
+      <PaymentStatusModal
+        visible={modalVisible}
+        status={modalStatus}
+        message={modalMessage}
+        amount={parseFloat(amount) || 0}
+        pendingPayments={pendingPayments}
+        onRetry={handleSubmit}
+        onClose={() => setModalVisible(false)}
+      />
     </KeyboardAvoidingView>
   );
 };

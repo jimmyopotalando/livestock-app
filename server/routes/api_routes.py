@@ -1,5 +1,3 @@
-# server/routes/api_routes.py
-
 import os
 from flask import request, jsonify
 from werkzeug.utils import secure_filename
@@ -10,10 +8,13 @@ from ..models.animal import Animal, Owner
 from ..utils.id_generator import generate_animal_id, generate_owner_id
 from ..utils.image_processor import save_images
 from ..utils.facial_recognition.recognizer import recognize_animal
+from ..utils.id_validator import animal_exists  # ✅ Import validator
+from ..utils.logger import log_event  # optional logging
 
 from . import api_bp
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
+
 
 @api_bp.route('/register', methods=['POST'])
 def register_animal():
@@ -70,18 +71,67 @@ def register_animal():
 
 @api_bp.route('/verify', methods=['POST'])
 def verify_animal():
+    """
+    Server-side verification:
+    - Requires 4 images: front/back/left/right
+    - Requires GPS: latitude & longitude
+    - Optional timestamp
+    """
     try:
-        image_file = request.files.get('image')
-        if not image_file:
-            return jsonify({'success': False, 'error': 'No image uploaded.'}), 400
+        animal_id = request.form.get('animal_id')
+        gps_lat = request.form.get('latitude', type=float)
+        gps_lng = request.form.get('longitude', type=float)
+        timestamp = request.form.get('timestamp')
 
-        image_path = os.path.join(UPLOAD_FOLDER, secure_filename(image_file.filename))
-        image_file.save(image_path)
+        # Collect 4 images
+        image_files = {
+            'front': request.files.get('image_front'),
+            'back': request.files.get('image_back'),
+            'left': request.files.get('image_left'),
+            'right': request.files.get('image_right')
+        }
 
-        result = recognize_animal(image_path)
+        # 1️⃣ Validate animal_id
+        if animal_id and not animal_exists(animal_id):
+            return jsonify({'success': False, 'error': 'Invalid or unregistered animal_id.'}), 400
+
+        # 2️⃣ Validate images
+        missing_images = [k for k, v in image_files.items() if v is None]
+        if missing_images:
+            return jsonify({
+                'success': False,
+                'error': f'Missing images: {", ".join(missing_images)}'
+            }), 400
+
+        # 3️⃣ Validate GPS
+        if gps_lat is None or gps_lng is None:
+            return jsonify({'success': False, 'error': 'GPS coordinates are required.'}), 400
+        if not (-90 <= gps_lat <= 90) or not (-180 <= gps_lng <= 180):
+            return jsonify({'success': False, 'error': 'Invalid GPS coordinates.'}), 400
+
+        # 4️⃣ Validate timestamp
+        if not timestamp:
+            return jsonify({'success': False, 'error': 'Timestamp is required.'}), 400
+
+        # 5️⃣ Save images
+        image_paths = {}
+        for key, file in image_files.items():
+            filename = secure_filename(file.filename)
+            path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(path)
+            image_paths[key] = path
+
+        # 6️⃣ Perform recognition
+        result = recognize_animal(image_paths)
+
+        # 7️⃣ Log verification attempt
+        log_event(f"Verification attempted for animal {animal_id or 'unknown'} with GPS ({gps_lat},{gps_lng})")
 
         if result:
             animal, owner = result['animal'], result['owner']
+            if not animal_exists(animal.animal_id):
+                return jsonify({'success': False, 'error': 'Animal not found in database.'}), 400
+
             return jsonify({
                 'success': True,
                 'match_found': True,
